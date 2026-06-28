@@ -29,6 +29,7 @@ Design:
 """
 
 import os
+import subprocess
 import time
 import webbrowser
 
@@ -63,6 +64,11 @@ LIKE_COLOR = "#ff4d6d"  # filled-heart color when a track is liked
 # Windows (no account needed); sign-in only powers TIDAL-account actions.
 SIGNIN_HINT = ("Sign in to like tracks and show quality info from your TIDAL "
                "account. The now-playing display works without signing in.")
+
+# TIDAL's web player. Opened as a standalone browser "app window" so its DRM
+# (Widevine) works; a browser-played session also shows up in this widget via
+# the Windows media controls.
+WEB_PLAYER_URL = "https://listen.tidal.com"
 
 
 def _fmt_time(secs: float) -> str:
@@ -537,6 +543,9 @@ class NowPlayingWidget(QWidget):
         act_open = QAction("Open TIDAL", self)
         act_open.triggered.connect(self._open_tidal)
         menu.addAction(act_open)
+        act_web = QAction("TIDAL web player", self)
+        act_web.triggered.connect(self._open_web_player)
+        menu.addAction(act_web)
         menu.addSeparator()
 
         act_check_updates = QAction("Check for updates...", self)
@@ -666,6 +675,37 @@ class NowPlayingWidget(QWidget):
                 continue
         self._tray_msg("Opening TIDAL. Change playlists or streaming quality "
                        "in the TIDAL app.", "TIDAL")
+
+    def _open_web_player(self):
+        # Open TIDAL's web player as a chromeless browser "app window": it acts
+        # like a dedicated popup, plays fine (the browser has the Widevine DRM a
+        # Qt web view lacks), and its media session shows up in this widget.
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        candidates = [
+            os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(local, "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+        for exe in candidates:
+            if exe and os.path.exists(exe):
+                try:
+                    subprocess.Popen([exe, f"--app={WEB_PLAYER_URL}",
+                                      "--window-size=480,800"])
+                    return
+                except Exception:
+                    pass
+        # Fallback: the default browser (a normal tab).
+        try:
+            webbrowser.open(WEB_PLAYER_URL)
+        except Exception:
+            try:
+                os.startfile(WEB_PLAYER_URL)
+            except Exception:
+                pass
 
     # ---- mode toggle -------------------------------------------------------
     def toggle_mode(self):
@@ -882,6 +922,9 @@ class NowPlayingWidget(QWidget):
         act_open = QAction("Open TIDAL", self)
         act_open.triggered.connect(self._open_tidal)
         menu.addAction(act_open)
+        act_web = QAction("TIDAL web player", self)
+        act_web.triggered.connect(self._open_web_player)
+        menu.addAction(act_web)
         if not self._logged_in:
             act_signin = QAction("Sign in to TIDAL", self)
             act_signin.setToolTip(SIGNIN_HINT)

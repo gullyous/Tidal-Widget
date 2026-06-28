@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **TIDAL web player** menu item (tray + right-click): opens listen.tidal.com as
+  a standalone app window via Edge/Chrome, so the widget is usable without the
+  TIDAL desktop app. A browser-played session shows up via Windows media controls.
 - **In-app updates.** The widget can check GitHub for new releases on startup
   and via a tray "Check for updates..." item. When one is found you can update
   with one click (Update now / Skip this version / Later); the download is over

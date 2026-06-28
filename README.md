@@ -53,7 +53,7 @@ one-time TIDAL sign-in (see below).
 ## Requirements
 
 - Windows 10 or 11
-- The TIDAL desktop app (running and playing)
+- The TIDAL desktop app, or the built-in **TIDAL web player** option (opens in Edge/Chrome)
 - Only to run from source or build it yourself: Python 3.10+ (the prebuilt `.exe` needs neither)
 
 ## Get it
@@ -94,6 +94,7 @@ The result is `dist\TidalNowPlaying.exe`.
 - **Resize:** double-click the card, or use the chevron in the top-right corner, to switch between compact and expanded.
 - **System tray:** left-click the tray icon to show or hide the widget; right-click for the full menu (current track, play/pause, next, previous, like, Open TIDAL, check for updates, show/hide, expand/compact, Settings, and quit).
 - **Right-click the widget:** the same management actions (Settings, Open TIDAL, check for updates, sign in, hide, expand/compact, quit), without the transport controls, since those are already buttons on the widget.
+- **TIDAL web player:** the tray/right-click menu's **TIDAL web player** item opens listen.tidal.com as a standalone window (via Edge/Chrome). Handy if you don't have the desktop app, the widget reads it through Windows media controls, so keep **Follow other apps** on.
 - **Seek:** in expanded mode, drag the progress bar to jump to any point in the track.
 - **Shuffle / repeat:** toggle buttons appear in expanded mode when the player supports them. (TIDAL does not expose shuffle/repeat to Windows, so they stay hidden for TIDAL.)
 - **Settings:** right-click the tray icon (or the widget) and choose **Settings...** for accent, opacity, refresh interval, run-at-startup, hotkeys, and update checks. An **About** tab shows the version, links, and licenses.

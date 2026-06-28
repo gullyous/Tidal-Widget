@@ -14,6 +14,8 @@ to [Semantic Versioning](https://semver.org/).
 ### Changed
 - The "Open TIDAL" action is no longer labelled "change quality"; opening TIDAL
   is useful for switching playlists too.
+- Relicensed from MIT to the **GNU General Public License v3.0** (GPLv3).
+  Versions up to and including 1.0.0 remain available under the MIT License.
 
 ### Fixed
 - TIDAL login no longer silently expires: the OAuth token is re-saved after it

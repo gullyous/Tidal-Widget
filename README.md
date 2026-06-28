@@ -6,7 +6,7 @@ compact/expanded view, and a system-tray menu. It reads playback straight from
 Windows, so there are no API keys, no login, and no configuration required to
 get going.
 
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6)
 ![Python: 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)
 
@@ -185,4 +185,9 @@ Made by **[gullyous](https://github.com/gullyous)**.
 
 ## License
 
-Released under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+Released under the **GNU General Public License v3.0**. See the [LICENSE](LICENSE)
+file for the full text.
+
+This is free software: you can redistribute it and/or modify it under the terms
+of the GPL, version 3 or (at your option) any later version. It comes with no
+warranty. Versions up to and including 1.0.0 were released under the MIT License.

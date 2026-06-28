@@ -33,3 +33,8 @@ START_EXPANDED = False
 
 # Keep the widget above other windows.
 ALWAYS_ON_TOP = True
+
+# Enable system-wide global hotkeys (needs the optional "pynput" package):
+# Ctrl+Alt+Space play/pause, Ctrl+Alt+Left/Right prev/next, Ctrl+Alt+L like,
+# Ctrl+Alt+H show/hide.
+HOTKEYS_ENABLED = True

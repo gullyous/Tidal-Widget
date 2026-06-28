@@ -31,12 +31,14 @@ try:
         GlobalSystemMediaTransportControlsSessionManager as MediaManager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
     )
+    from winsdk.windows.media import MediaPlaybackAutoRepeatMode
     from winsdk.windows.storage.streams import DataReader, Buffer, InputStreamOptions
 except ImportError:  # pragma: no cover - fallback path
     from winrt.windows.media.control import (
         GlobalSystemMediaTransportControlsSessionManager as MediaManager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
     )
+    from winrt.windows.media import MediaPlaybackAutoRepeatMode
     from winrt.windows.storage.streams import DataReader, Buffer, InputStreamOptions
 
 PLAYING = PlaybackStatus.PLAYING
@@ -143,6 +145,29 @@ async def _snapshot(mgr, last_key):
     except Exception:
         info["source"] = ""
 
+    # transport capabilities + shuffle/repeat state (drives the adaptive UI)
+    try:
+        pi = session.get_playback_info()
+        c = pi.controls
+        info["can_playpause"] = bool(c.is_play_enabled or c.is_pause_enabled
+                                     or c.is_play_pause_toggle_enabled)
+        info["can_next"] = bool(c.is_next_enabled)
+        info["can_prev"] = bool(c.is_previous_enabled)
+        info["can_seek"] = bool(c.is_playback_position_enabled)
+        info["can_shuffle"] = bool(c.is_shuffle_enabled)
+        info["can_repeat"] = bool(c.is_repeat_enabled)
+        sh = pi.is_shuffle_active
+        info["shuffle"] = bool(sh) if sh is not None else False
+        rm = pi.auto_repeat_mode
+        info["repeat"] = int(rm) if rm is not None else 0  # 0 none, 1 track, 2 list
+        rate = pi.playback_rate
+        info["rate"] = float(rate) if rate else 1.0
+    except Exception:
+        for _k in ("can_playpause", "can_next", "can_prev",
+                   "can_seek", "can_shuffle", "can_repeat"):
+            info[_k] = True
+        info["shuffle"], info["repeat"], info["rate"] = False, 0, 1.0
+
     key = (info["title"], info["artist"], info["album"])
     info["_key"] = key
     if key != last_key:
@@ -153,17 +178,47 @@ async def _snapshot(mgr, last_key):
     return info
 
 
+# repeat cycle order: None -> List (all) -> Track (one) -> None
+_REPEAT_ORDER = [0, 2, 1]
+
+
 async def _do_command(mgr, cmd):
     s = _pick_session(mgr)
     if s is None:
         return
+    # a command is either a string ("next") or a ("name", value) tuple ("seek", 42.0)
+    name = cmd[0] if isinstance(cmd, tuple) else cmd
+    arg = cmd[1] if isinstance(cmd, tuple) else None
     try:
-        if cmd == "playpause":
-            await s.try_toggle_play_pause_async()
-        elif cmd == "next":
+        if name == "playpause":
+            # Prefer the discrete play/pause command for the current state.
+            # TIDAL (and some other apps) ignore try_toggle_play_pause when
+            # paused, so toggling by hand is more reliable. Fall back to the
+            # toggle if the discrete call is unavailable.
+            try:
+                playing = s.get_playback_info().playback_status == PLAYING
+                if playing:
+                    await s.try_pause_async()
+                else:
+                    await s.try_play_async()
+            except Exception:
+                await s.try_toggle_play_pause_async()
+        elif name == "next":
             await s.try_skip_next_async()
-        elif cmd == "prev":
+        elif name == "prev":
             await s.try_skip_previous_async()
+        elif name == "seek":
+            # SMTC positions are in 100-nanosecond ticks
+            await s.try_change_playback_position_async(int(max(0.0, arg) * 10_000_000))
+        elif name == "shuffle":
+            cur = s.get_playback_info().is_shuffle_active
+            await s.try_change_shuffle_active_async(not bool(cur))
+        elif name == "repeat":
+            cur = s.get_playback_info().auto_repeat_mode
+            cur = int(cur) if cur is not None else 0
+            idx = _REPEAT_ORDER.index(cur) if cur in _REPEAT_ORDER else 0
+            nxt = _REPEAT_ORDER[(idx + 1) % len(_REPEAT_ORDER)]
+            await s.try_change_auto_repeat_mode_async(MediaPlaybackAutoRepeatMode(nxt))
     except Exception:
         pass
 
@@ -194,6 +249,15 @@ class MediaWorker(QThread):
 
     def prev_track(self):
         self._cmds.put("prev")
+
+    def seek(self, seconds):
+        self._cmds.put(("seek", float(seconds)))
+
+    def toggle_shuffle(self):
+        self._cmds.put("shuffle")
+
+    def cycle_repeat(self):
+        self._cmds.put("repeat")
 
     def stop(self):
         self._stop = True

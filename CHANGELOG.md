@@ -16,5 +16,20 @@ First release.
   (`BACKGROUND_OPACITY`, `WINDOW_OPACITY`) and accent color.
 - Smooth, interpolated progress bar in the expanded view.
 - System-tray icon with controls, show/hide, and quit.
+- Heart button to favorite the playing track to your TIDAL collection (optional,
+  one-time OAuth sign-in via tidalapi; token stored locally in %APPDATA%).
+- Custom multi-resolution app icon for the window, tray, and packaged `.exe`.
+- Drag-to-reposition that locks the widget into the nearest screen corner on
+  release (preserved across compact/expanded resizes and on multi-monitor).
+- Seekable progress bar (drag to scrub) via SMTC.
+- Shuffle and repeat toggles, capability-gated (shown only when the source supports them).
+- Adaptive controls that grey out / hide actions the current source doesn't support.
+- Preferences dialog with persisted settings (QSettings): accent, panel/window
+  opacity, refresh interval, always-on-top, start-expanded, follow-other-apps.
+- Run-at-Windows-startup toggle and optional global hotkeys (pynput).
+- More reliable play/pause: discrete play/pause by state, since TIDAL ignores the
+  SMTC toggle command when paused.
+- Quality badge showing the best quality a track is available in on TIDAL
+  (MAX / Hi-Res / Lossless / High / Atmos), with an "Open TIDAL" action.
 - Standalone Windows `.exe` build via PyInstaller (`build.bat`).
 - GitHub Actions workflow that builds and attaches the `.exe` to tagged releases.

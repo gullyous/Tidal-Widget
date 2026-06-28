@@ -6,3 +6,12 @@ PySide6>=6.6.0
 # If this ever fails to install, the code also accepts the newer split
 # "winrt-Windows.*" packages (see media_backend.py import shim).
 winsdk>=1.0.0b10
+
+# Optional: TIDAL "favorite / add to my collection" support for the heart
+# button (unofficial TIDAL API client). The widget runs fine without it;
+# the heart just reports that signing in is needed.
+tidalapi>=0.8.0
+
+# Optional: system-wide global hotkeys. The widget runs fine without it
+# (hotkeys are simply unavailable).
+pynput>=1.7.6

@@ -25,9 +25,11 @@ Design:
     interpolated between backend polls.
 """
 
+import os
 import time
+import webbrowser
 
-from PySide6.QtCore import Qt, QSize, QRectF, QTimer, Signal
+from PySide6.QtCore import Qt, QSize, QRectF, QPointF, QTimer, Signal
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QPainterPath, QPen, QLinearGradient,
     QAction, QGuiApplication,
@@ -46,11 +48,13 @@ RADIUS = 18          # card corner radius
 COMPACT_CARD = (360, 92)
 EXPANDED_CARD = (360, 330)
 TOGGLE_D = 22        # corner expand/collapse button diameter
+CORNER_GAP = 6       # visible gap from the screen edges when locked into a corner
 
 # --- palette ---------------------------------------------------------------
 INK = "#ffffff"
 SUBTLE = "#a9a9b4"
 ON_ACCENT = "#06222a"   # icon color that reads on the cyan accent button
+LIKE_COLOR = "#ff4d6d"  # filled-heart color when a track is liked
 
 
 def _fmt_time(secs: float) -> str:
@@ -102,33 +106,75 @@ class ElidedLabel(QLabel):
 
 
 class ProgressLine(QWidget):
-    """A thin, non-seekable progress bar painted with the accent color."""
+    """Progress bar that can be clicked or dragged to seek (when seekable)."""
+
+    seek_requested = Signal(float)  # fraction 0..1
+    BAR_H = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._frac = 0.0
-        self.setFixedHeight(4)
+        self._seekable = False
+        self._dragging = False
+        self.setFixedHeight(14)
+
+    def set_seekable(self, ok: bool):
+        if ok != self._seekable:
+            self._seekable = ok
+            self.setCursor(Qt.PointingHandCursor if ok else Qt.ArrowCursor)
+            self.update()
 
     def set_fraction(self, frac: float):
+        if self._dragging:
+            return  # don't fight the user's scrub
         frac = 0.0 if frac < 0 else 1.0 if frac > 1 else frac
         if abs(frac - self._frac) > 0.0005:
             self._frac = frac
             self.update()
 
+    def _frac_at(self, x):
+        return min(1.0, max(0.0, x / max(1, self.width())))
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        r = QRectF(self.rect())
-        rad = r.height() / 2
+        w = self.width()
+        cy = self.height() / 2
+        track = QRectF(0, cy - self.BAR_H / 2, w, self.BAR_H)
+        rad = self.BAR_H / 2
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(255, 255, 255, 45))
-        p.drawRoundedRect(r, rad, rad)
+        p.drawRoundedRect(track, rad, rad)
+        fx = w * self._frac
         if self._frac > 0:
-            fill = QRectF(r)
-            fill.setWidth(max(r.height(), r.width() * self._frac))
+            fill = QRectF(track)
+            fill.setWidth(max(self.BAR_H, fx))
             p.setBrush(QColor(config.ACCENT))
             p.drawRoundedRect(fill, rad, rad)
+        if self._seekable:
+            kr = 5
+            p.setBrush(QColor(config.ACCENT))
+            p.drawEllipse(QPointF(min(max(kr, fx), w - kr), cy), kr, kr)
         p.end()
+
+    def mousePressEvent(self, e):
+        if self._seekable and e.button() == Qt.LeftButton:
+            self._dragging = True
+            self._frac = self._frac_at(e.position().x())
+            self.update()
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        if self._dragging:
+            self._frac = self._frac_at(e.position().x())
+            self.update()
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        if self._dragging and e.button() == Qt.LeftButton:
+            self._dragging = False
+            self.seek_requested.emit(self._frac)
+            e.accept()
 
 
 class Card(QFrame):
@@ -197,6 +243,13 @@ class NowPlayingWidget(QWidget):
     next_clicked = Signal()
     prev_clicked = Signal()
     quit_requested = Signal()
+    like_clicked = Signal(str, str, str, bool)  # title, artist, album, currently_liked
+    signin_requested = Signal()
+    seek_clicked = Signal(float)     # absolute position in seconds
+    shuffle_clicked = Signal()
+    repeat_clicked = Signal()
+    settings_requested = Signal()
+    quality_requested = Signal(str, str)   # title, artist (request "available in" quality)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -211,6 +264,15 @@ class NowPlayingWidget(QWidget):
         self._drag = None
         self._cover_src = None         # full-res cover QPixmap (or None)
         self._expanded = bool(config.START_EXPANDED)
+        self._corner = "br"            # which screen corner the widget locks to
+
+        # current track + like state (for the heart button)
+        self._cur_title = ""
+        self._cur_artist = ""
+        self._cur_album = ""
+        self._liked = False
+        self._shuffle = False
+        self._repeat = 0   # 0 none, 1 track, 2 list
 
         # progress interpolation state
         self._pos = 0.0
@@ -277,6 +339,8 @@ class NowPlayingWidget(QWidget):
         text.addWidget(self.c_artist)
         text.addStretch(1)
 
+        self.c_like = self._round_btn(icons.heart_icon(SUBTLE, filled=False),
+                                      self._on_heart, 28)
         self.c_prev = self._round_btn(icons.prev_icon(INK), self.prev_clicked.emit, 30)
         self.c_play = self._round_btn(icons.play_icon(ON_ACCENT),
                                       self.playpause_clicked.emit, 36, accent=True)
@@ -284,6 +348,7 @@ class NowPlayingWidget(QWidget):
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
+        controls.addWidget(self.c_like)
         controls.addWidget(self.c_prev)
         controls.addWidget(self.c_play)
         controls.addWidget(self.c_next)
@@ -313,7 +378,17 @@ class NowPlayingWidget(QWidget):
         self.e_artist.setObjectName("artist")
         self.e_artist.setAlignment(Qt.AlignCenter)
 
+        self.e_quality = QLabel("")
+        self.e_quality.setObjectName("quality")
+        self.e_quality.hide()
+        quality_row = QHBoxLayout()
+        quality_row.setContentsMargins(0, 0, 0, 0)
+        quality_row.addStretch(1)
+        quality_row.addWidget(self.e_quality)
+        quality_row.addStretch(1)
+
         self.progress = ProgressLine()
+        self.progress.seek_requested.connect(self._on_seek)
         self.e_pos = QLabel("--:--")
         self.e_pos.setObjectName("time")
         self.e_dur = QLabel("--:--")
@@ -324,17 +399,29 @@ class NowPlayingWidget(QWidget):
         times.addStretch(1)
         times.addWidget(self.e_dur)
 
+        self.e_like = self._round_btn(icons.heart_icon(SUBTLE, filled=False),
+                                      self._on_heart, 34)
+        self.e_shuffle = self._round_btn(icons.shuffle_icon(SUBTLE),
+                                         self.shuffle_clicked.emit, 30)
         self.e_prev = self._round_btn(icons.prev_icon(INK), self.prev_clicked.emit, 38)
         self.e_play = self._round_btn(icons.play_icon(ON_ACCENT),
                                       self.playpause_clicked.emit, 46, accent=True)
         self.e_next = self._round_btn(icons.next_icon(INK), self.next_clicked.emit, 38)
+        self.e_repeat = self._round_btn(icons.repeat_icon(SUBTLE),
+                                        self.repeat_clicked.emit, 30)
         controls = QHBoxLayout()
-        controls.setSpacing(16)
+        controls.setSpacing(12)
         controls.addStretch(1)
+        controls.addWidget(self.e_like)
+        controls.addWidget(self.e_shuffle)
         controls.addWidget(self.e_prev)
         controls.addWidget(self.e_play)
         controls.addWidget(self.e_next)
+        controls.addWidget(self.e_repeat)
         controls.addStretch(1)
+        # shuffle/repeat appear only when the current source supports them
+        self.e_shuffle.hide()
+        self.e_repeat.hide()
 
         col = QVBoxLayout(page)
         col.setContentsMargins(20, 20, 20, 18)
@@ -343,6 +430,7 @@ class NowPlayingWidget(QWidget):
         col.addSpacing(2)
         col.addWidget(self.e_title)
         col.addWidget(self.e_artist)
+        col.addLayout(quality_row)
         col.addStretch(1)
         col.addWidget(self.progress)
         col.addLayout(times)
@@ -366,6 +454,9 @@ class NowPlayingWidget(QWidget):
             QLabel#title_big  {{ color:{INK}; font-size:16px; font-weight:700; }}
             QLabel#artist     {{ color:{SUBTLE}; font-size:11px; }}
             QLabel#time       {{ color:{SUBTLE}; font-size:10px; }}
+            QLabel#quality    {{ color:{config.ACCENT}; border:1px solid {config.ACCENT};
+                                  border-radius:8px; padding:1px 8px;
+                                  font-size:10px; font-weight:700; }}
             QLabel            {{ background:transparent; }}
             QPushButton {{ border:none; background:rgba(255,255,255,0.10); }}
             QPushButton:hover   {{ background:rgba(255,255,255,0.20); }}
@@ -377,6 +468,23 @@ class NowPlayingWidget(QWidget):
         # round each button to a circle via its fixed size
         for b in self.findChildren(QPushButton):
             b.setStyleSheet(f"border-radius:{b.width() // 2}px;")
+
+    def apply_settings(self):
+        """Re-apply settings live after the preferences dialog saves them."""
+        self.setWindowOpacity(min(1.0, max(0.2, getattr(config, "WINDOW_OPACITY", 1.0))))
+        flags = Qt.FramelessWindowHint | Qt.Tool
+        if config.ALWAYS_ON_TOP:
+            flags |= Qt.WindowStaysOnTopHint
+        was_visible = self.isVisible()
+        self.setWindowFlags(flags)          # note: this hides the window
+        self._apply_style()                 # picks up the new accent color
+        self._refresh_shuffle_repeat()
+        self._refresh_heart()
+        self.card.update()
+        self.progress.update()
+        if was_visible:
+            self._show_widget()
+            self._snap_to_corner()
 
     # ---- system tray -------------------------------------------------------
     def _build_tray(self):
@@ -405,6 +513,18 @@ class NowPlayingWidget(QWidget):
         menu.addAction(act_prev)
         menu.addSeparator()
 
+        self.act_like = QAction(icons.heart_icon(SUBTLE, filled=False),
+                                "Like current track", self)
+        self.act_like.triggered.connect(self._on_heart)
+        menu.addAction(self.act_like)
+        act_signin = QAction("Sign in to TIDAL", self)
+        act_signin.triggered.connect(lambda: self.signin_requested.emit())
+        menu.addAction(act_signin)
+        act_open = QAction("Open TIDAL (change quality)", self)
+        act_open.triggered.connect(self._open_tidal)
+        menu.addAction(act_open)
+        menu.addSeparator()
+
         self.act_visibility = QAction("Hide widget", self)
         self.act_visibility.triggered.connect(self._toggle_visibility)
         menu.addAction(self.act_visibility)
@@ -413,6 +533,9 @@ class NowPlayingWidget(QWidget):
         menu.addAction(self.act_mode)
         menu.addSeparator()
 
+        act_settings = QAction("Settings...", self)
+        act_settings.triggered.connect(lambda: self.settings_requested.emit())
+        menu.addAction(act_settings)
         act_quit = QAction("Quit", self)
         act_quit.triggered.connect(lambda: self.quit_requested.emit())
         menu.addAction(act_quit)
@@ -457,6 +580,71 @@ class NowPlayingWidget(QWidget):
             self.act_track.setText("Nothing playing")
             self.tray.setToolTip("Tidal Now Playing")
 
+    # ---- likes / TIDAL -----------------------------------------------------
+    def _on_heart(self):
+        if self._cur_title:
+            self.like_clicked.emit(self._cur_title, self._cur_artist,
+                                   self._cur_album, self._liked)
+
+    def _refresh_heart(self):
+        ic = icons.heart_icon(LIKE_COLOR if self._liked else SUBTLE, 64, self._liked)
+        for b in (self.c_like, self.e_like):
+            b.setIcon(ic)
+
+    def _tray_msg(self, text, title="Tidal Now Playing"):
+        if self.tray:
+            self.tray.showMessage(title, text,
+                                  QSystemTrayIcon.MessageIcon.Information, 4000)
+
+    def on_like_result(self, ok, action, label):
+        if action == "login":
+            self._tray_msg("Sign in to TIDAL first (tray icon menu).", "TIDAL")
+            return
+        if not ok:
+            if action == "nomatch":
+                self._tray_msg("Couldn't find this track on TIDAL.", "TIDAL")
+            else:
+                self._tray_msg("Couldn't update your TIDAL collection.", "TIDAL")
+            return
+        if action == "added":
+            self._liked = True
+            self._tray_msg("Added to your collection:\n" + label, "TIDAL")
+        elif action == "removed":
+            self._liked = False
+            self._tray_msg("Removed from your collection:\n" + label, "TIDAL")
+        self._refresh_heart()
+
+    def on_login_link(self, url):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+        self._tray_msg("Opening TIDAL sign-in in your browser...", "TIDAL")
+
+    def on_login_state(self, ok, msg):
+        self._tray_msg(msg, "TIDAL")
+
+    def on_quality(self, title, artist, label):
+        if (title, artist) != (self._cur_title, self._cur_artist):
+            return  # stale result for a track that already changed
+        if label:
+            self.e_quality.setText(label)
+            self.e_quality.setToolTip(f"Available in {label} on TIDAL")
+            self.e_quality.show()
+        else:
+            self.e_quality.hide()
+
+    def _open_tidal(self):
+        for opener in (lambda: webbrowser.open("tidal://"),
+                       lambda: os.startfile("tidal://")):
+            try:
+                opener()
+                break
+            except Exception:
+                continue
+        self._tray_msg("Opening TIDAL. Change streaming quality in "
+                       "TIDAL > Settings > Streaming.", "TIDAL")
+
     # ---- mode toggle -------------------------------------------------------
     def toggle_mode(self):
         self._set_mode(not self._expanded)
@@ -466,7 +654,6 @@ class NowPlayingWidget(QWidget):
         card_w, card_h = EXPANDED_CARD if expanded else COMPACT_CARD
         new_w, new_h = card_w + 2 * MARGIN, card_h + 2 * MARGIN
 
-        bottom_right = self.frameGeometry().bottomRight()
         self.stack.setCurrentIndex(1 if expanded else 0)
         self.setFixedSize(new_w, new_h)
 
@@ -476,10 +663,9 @@ class NowPlayingWidget(QWidget):
         self.toggle_btn.move(card_w - 8 - TOGGLE_D, 8)
         self.toggle_btn.raise_()
 
+        # keep the widget locked to its current corner after resizing
         if anchor:
-            new_x = bottom_right.x() - new_w
-            new_y = bottom_right.y() - new_h
-            self._move_clamped(new_x, new_y)
+            self._snap_to_corner()
 
         self._refresh_covers()
 
@@ -501,11 +687,27 @@ class NowPlayingWidget(QWidget):
             self.progress.set_fraction(0.0)
             self.e_pos.setText("--:--")
             self.e_dur.setText("--:--")
+            self._cur_title = self._cur_artist = self._cur_album = ""
+            self._liked = False
+            self._refresh_heart()
+            self.progress.set_seekable(False)
+            self.e_shuffle.hide()
+            self.e_repeat.hide()
+            self.e_quality.hide()
             self._update_tray(None, None, available=False)
             return
 
         title = info.get("title") or "Unknown title"
         artist = info.get("artist") or "Unknown artist"
+        track_changed = (title != self._cur_title or artist != self._cur_artist)
+        if track_changed:
+            self._liked = False        # a new track starts unliked in the UI
+            self.e_quality.hide()      # clear the quality badge until it resolves
+        self._cur_title, self._cur_artist = title, artist
+        self._cur_album = info.get("album") or ""
+        self._refresh_heart()
+        if track_changed:
+            self.quality_requested.emit(title, artist)
         self.c_title.setFullText(title)
         self.e_title.setFullText(title)
         self.c_artist.setFullText(artist)
@@ -514,6 +716,7 @@ class NowPlayingWidget(QWidget):
         self._playing = bool(info.get("playing"))
         self._set_play_icon(self._playing)
         self._update_tray(title, artist, available=True)
+        self._apply_caps(info)
 
         self._pos = float(info.get("position") or 0.0)
         self._dur = float(info.get("duration") or 0.0)
@@ -535,6 +738,39 @@ class NowPlayingWidget(QWidget):
         icon = icons.pause_icon(ON_ACCENT) if playing else icons.play_icon(ON_ACCENT)
         for b in self._play_buttons:
             b.setIcon(icon)
+
+    # ---- transport capabilities + shuffle/repeat ---------------------------
+    def _apply_caps(self, info):
+        self.progress.set_seekable(bool(info.get("can_seek")))
+        for b in (self.c_prev, self.e_prev):
+            b.setEnabled(bool(info.get("can_prev", True)))
+        for b in (self.c_next, self.e_next):
+            b.setEnabled(bool(info.get("can_next", True)))
+        for b in self._play_buttons:
+            b.setEnabled(bool(info.get("can_playpause", True)))
+        self.e_shuffle.setVisible(bool(info.get("can_shuffle")))
+        self.e_repeat.setVisible(bool(info.get("can_repeat")))
+        self._shuffle = bool(info.get("shuffle"))
+        self._repeat = int(info.get("repeat", 0))
+        self._refresh_shuffle_repeat()
+
+    def _refresh_shuffle_repeat(self):
+        self.e_shuffle.setIcon(
+            icons.shuffle_icon(config.ACCENT if self._shuffle else SUBTLE))
+        if self._repeat == 1:
+            self.e_repeat.setIcon(icons.repeat_icon(config.ACCENT, one=True))
+        elif self._repeat == 2:
+            self.e_repeat.setIcon(icons.repeat_icon(config.ACCENT))
+        else:
+            self.e_repeat.setIcon(icons.repeat_icon(SUBTLE))
+
+    def _on_seek(self, frac):
+        if self._dur > 0:
+            secs = frac * self._dur
+            self._pos = secs
+            self._anchor = time.monotonic()
+            self._update_progress(secs)
+            self.seek_clicked.emit(secs)
 
     def _refresh_covers(self):
         if self._cover_src is None:
@@ -560,17 +796,37 @@ class NowPlayingWidget(QWidget):
             self.e_pos.setText("--:--")
             self.e_dur.setText("--:--")
 
-    # ---- positioning -------------------------------------------------------
-    def _move_to_corner(self):
-        geo = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(geo.right() - self.width() - 24,
-                  geo.bottom() - self.height() - 24)
+    # ---- positioning / corner locking --------------------------------------
+    def _current_screen(self):
+        scr = QGuiApplication.screenAt(self.frameGeometry().center())
+        return scr or QGuiApplication.primaryScreen()
 
-    def _move_clamped(self, x: int, y: int):
-        geo = QGuiApplication.primaryScreen().availableGeometry()
-        x = max(geo.left(), min(x, geo.right() - self.width()))
-        y = max(geo.top(), min(y, geo.bottom() - self.height()))
+    def _corner_pos(self, corner):
+        geo = self._current_screen().availableGeometry()
+        w, h = self.width(), self.height()
+        # The window carries MARGIN px of transparent padding for the drop
+        # shadow. Offset by it so the VISIBLE card hugs the corner, leaving only
+        # CORNER_GAP; the transparent margin spills harmlessly off-screen.
+        off = MARGIN - CORNER_GAP
+        x = geo.left() - off if corner[1] == "l" else geo.right() - w + off
+        y = geo.top() - off if corner[0] == "t" else geo.bottom() - h + off
+        return int(x), int(y)
+
+    def _snap_to_corner(self, corner=None):
+        if corner:
+            self._corner = corner
+        x, y = self._corner_pos(self._corner)
         self.move(x, y)
+
+    def _nearest_corner(self):
+        geo = self._current_screen().availableGeometry()
+        c = self.frameGeometry().center()
+        h = "l" if c.x() < geo.center().x() else "r"
+        v = "t" if c.y() < geo.center().y() else "b"
+        return v + h
+
+    def _move_to_corner(self):
+        self._snap_to_corner(self._corner)
 
     # ---- window drag + double-click + context menu -------------------------
     def mousePressEvent(self, e):
@@ -584,7 +840,10 @@ class NowPlayingWidget(QWidget):
             e.accept()
 
     def mouseReleaseEvent(self, e):
+        was_dragging = self._drag is not None
         self._drag = None
+        if was_dragging:
+            self._snap_to_corner(self._nearest_corner())
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.LeftButton:

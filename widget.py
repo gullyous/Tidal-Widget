@@ -46,7 +46,7 @@ import icons
 MARGIN = 18          # transparent padding so the drop shadow has room
 RADIUS = 18          # card corner radius
 COMPACT_CARD = (360, 92)
-EXPANDED_CARD = (360, 330)
+EXPANDED_CARD = (360, 372)
 TOGGLE_D = 22        # corner expand/collapse button diameter
 CORNER_GAP = 6       # visible gap from the screen edges when locked into a corner
 
@@ -427,7 +427,7 @@ class NowPlayingWidget(QWidget):
         col.setContentsMargins(20, 20, 20, 18)
         col.setSpacing(8)
         col.addLayout(cover_row)
-        col.addSpacing(2)
+        col.addSpacing(10)
         col.addWidget(self.e_title)
         col.addWidget(self.e_artist)
         col.addLayout(quality_row)

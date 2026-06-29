@@ -3,9 +3,13 @@
 All notable changes to this project are documented here. This project adheres
 to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-06-29
 
 ### Added
+- **Volume slider** in the expanded card: controls the playing app's volume
+  (TIDAL desktop, or your browser for the web player) via the Windows Core Audio
+  APIs, with a system-volume fallback and a mute toggle. Hidden automatically
+  when nothing controllable is found.
 - **TIDAL web player** menu item (tray + right-click): opens listen.tidal.com as
   a standalone app window via Edge/Chrome, so the widget is usable without the
   TIDAL desktop app. A browser-played session shows up via Windows media controls.
@@ -34,6 +38,10 @@ to [Semantic Versioning](https://semver.org/).
 - Relicensed from MIT to the **GNU General Public License v3.0** (GPLv3), with
   SPDX headers across the source files. Versions up to and including 1.0.0 remain
   available under the MIT License.
+- **Performance:** the backend blocks on a queue instead of polling ~10x/sec,
+  reads playback info once per poll, and the progress timer runs only when
+  playing + expanded + visible. The build is now driven by the committed
+  PyInstaller spec with unused Qt modules excluded.
 
 ### Fixed
 - TIDAL login no longer silently expires: the OAuth token is re-saved after it

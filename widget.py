@@ -39,7 +39,7 @@ from PySide6.QtGui import (
     QAction, QGuiApplication,
 )
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QFrame, QStackedWidget, QSizePolicy,
+    QWidget, QLabel, QPushButton, QFrame, QStackedWidget, QSizePolicy, QSlider,
     QHBoxLayout, QVBoxLayout, QMenu, QSystemTrayIcon, QGraphicsDropShadowEffect,
 )
 
@@ -50,7 +50,7 @@ import icons
 MARGIN = 18          # transparent padding so the drop shadow has room
 RADIUS = 18          # card corner radius
 COMPACT_CARD = (360, 92)
-EXPANDED_CARD = (360, 372)
+EXPANDED_CARD = (360, 404)
 TOGGLE_D = 22        # corner expand/collapse button diameter
 CORNER_GAP = 6       # visible gap from the screen edges when locked into a corner
 
@@ -266,6 +266,8 @@ class NowPlayingWidget(QWidget):
     settings_requested = Signal()
     quality_requested = Signal(str, str)   # title, artist (request "available in" quality)
     check_updates_requested = Signal()     # tray "Check for updates..." (loud check)
+    volume_changed = Signal(float)         # 0.0-1.0, from the volume slider
+    mute_toggled = Signal(bool)            # desired mute state
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -288,6 +290,8 @@ class NowPlayingWidget(QWidget):
         self._cur_album = ""
         self._liked = False
         self._logged_in = False   # signed in to TIDAL (for likes/quality)
+        self._muted = False         # current app/system mute (from volume backend)
+        self._vol_updating = False  # guard: ignore slider signals during programmatic set
         self._shuffle = False
         self._repeat = 0   # 0 none, 1 track, 2 list
 
@@ -440,6 +444,22 @@ class NowPlayingWidget(QWidget):
         self.e_shuffle.hide()
         self.e_repeat.hide()
 
+        # volume (per-app via Core Audio); the row is shown only when a
+        # controllable audio session is found (see on_volume_state).
+        self.e_mute = self._round_btn(icons.volume_icon(INK), self._on_mute, 28)
+        self.e_vol = QSlider(Qt.Horizontal)
+        self.e_vol.setRange(0, 100)
+        self.e_vol.setFixedHeight(18)
+        self.e_vol.setCursor(Qt.PointingHandCursor)
+        self.e_vol.valueChanged.connect(self._on_vol_changed)
+        self.e_vol_box = QWidget()
+        vol_row = QHBoxLayout(self.e_vol_box)
+        vol_row.setContentsMargins(6, 0, 6, 0)
+        vol_row.setSpacing(8)
+        vol_row.addWidget(self.e_mute)
+        vol_row.addWidget(self.e_vol, 1)
+        self.e_vol_box.hide()
+
         col = QVBoxLayout(page)
         col.setContentsMargins(20, 20, 20, 18)
         col.setSpacing(8)
@@ -453,6 +473,8 @@ class NowPlayingWidget(QWidget):
         col.addLayout(times)
         col.addSpacing(2)
         col.addLayout(controls)
+        col.addSpacing(6)
+        col.addWidget(self.e_vol_box)
         return page
 
     def _round_btn(self, icon, on_click, diameter, accent=False):
@@ -464,6 +486,29 @@ class NowPlayingWidget(QWidget):
         b.setProperty("accent", accent)
         b.clicked.connect(lambda: on_click())
         return b
+
+    # ---- volume ------------------------------------------------------------
+    def _on_vol_changed(self, value):
+        if self._vol_updating:
+            return
+        self.volume_changed.emit(value / 100.0)
+
+    def _on_mute(self):
+        self.mute_toggled.emit(not self._muted)
+
+    def on_volume_state(self, level, muted, scope):
+        # level < 0 or empty scope -> nothing controllable; hide the row.
+        if level < 0 or not scope:
+            self.e_vol_box.hide()
+            return
+        self.e_vol_box.show()
+        self._muted = bool(muted)
+        self.e_mute.setIcon(icons.volume_icon(INK, muted=self._muted))
+        self.e_mute.setToolTip(("Unmute " if self._muted else "Mute ") + scope)
+        self.e_vol.setToolTip(f"Volume: {scope}")
+        self._vol_updating = True
+        self.e_vol.setValue(int(round(max(0.0, min(1.0, level)) * 100)))
+        self._vol_updating = False
 
     def _apply_style(self):
         self.setStyleSheet(f"""
@@ -481,6 +526,13 @@ class NowPlayingWidget(QWidget):
             QPushButton[accent="true"]         {{ background:{config.ACCENT}; }}
             QPushButton[accent="true"]:hover   {{ background:{config.ACCENT}; }}
             QPushButton[accent="true"]:pressed {{ background:{config.ACCENT}; }}
+            QSlider::groove:horizontal {{ height:4px; background:rgba(255,255,255,0.18);
+                                          border-radius:2px; }}
+            QSlider::sub-page:horizontal {{ background:{config.ACCENT}; border-radius:2px; }}
+            QSlider::add-page:horizontal {{ background:rgba(255,255,255,0.18);
+                                            border-radius:2px; }}
+            QSlider::handle:horizontal {{ width:12px; height:12px; margin:-4px 0;
+                                          border-radius:6px; background:#ffffff; }}
         """)
         # round each button to a circle via its fixed size
         for b in self.findChildren(QPushButton):

@@ -73,9 +73,11 @@ sponsored by TIDAL or Aspiro AB. "TIDAL" is a trademark of its respective owner.
 """
 
 
-RELEASE_NOTES = """Latest changes (this build)
+RELEASE_NOTES = """v1.1.0
 
 Added
+  - Volume slider: control the playing app's volume (TIDAL or your browser) with
+    a mute toggle, via the Windows Core Audio APIs.
   - In-app updates: checks GitHub on startup and from the button above; one-click
     install, verified over HTTPS with a SHA-256 checksum, then restarts.
   - Right-click the widget for a management menu (Settings, Open TIDAL, updates).
@@ -87,6 +89,8 @@ Changed
   - Removed the desktop balloon notifications; feedback is shown in the widget.
   - "Open TIDAL" is no longer labelled "change quality" (use it for playlists too).
   - Relicensed from MIT to the GNU General Public License v3.0 (GPLv3).
+  - Lower idle CPU and a leaner build (queue-driven backend, gated progress
+    timer, spec-based packaging with unused Qt modules excluded).
 
 Fixed
   - TIDAL sign-in no longer silently expires (the token is refreshed and re-saved).

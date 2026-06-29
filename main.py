@@ -20,6 +20,7 @@ from media_backend import MediaWorker
 from settings_dialog import SettingsDialog
 from tidal_likes import TidalLiker
 from updater import Updater, maybe_run_helper, sweep_leftovers
+from volume_backend import VolumeController
 from widget import NowPlayingWidget
 
 
@@ -139,6 +140,15 @@ def main():
     # Tray/right-click "Check for updates..." runs a loud check.
     widget.check_updates_requested.connect(lambda: updater.check(silent=False))
 
+    # per-app volume control (Windows Core Audio via pycaw, on its own COM
+    # thread). Hidden automatically if pycaw is unavailable or nothing is found.
+    volume = VolumeController()
+    widget.volume_changed.connect(volume.set_volume)
+    widget.mute_toggled.connect(volume.set_mute)
+    volume.state_changed.connect(widget.on_volume_state)
+    worker.updated.connect(
+        lambda info: volume.set_source(info.get("source", "") if info.get("available") else ""))
+
     # global hotkeys (optional; needs pynput)
     hotkeys = HotkeyManager()
     hotkeys.play_pause.connect(worker.play_pause)
@@ -153,6 +163,7 @@ def main():
     # and stop the hotkey listener before the app exits.
     def _cleanup():
         updater.stop()
+        volume.stop()
         worker.stop()
         worker.wait(2000)
         hotkeys.stop()
@@ -175,6 +186,7 @@ def main():
 
     worker.start()
     widget.show()
+    volume.start()
 
     # Silent startup check (only if enabled). A newer version pops the update
     # dialog; up-to-date/errors stay quiet (no loud handlers connected here).

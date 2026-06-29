@@ -82,6 +82,40 @@ def prev_icon(color="#ffffff", size=64):
     return QIcon(pm)
 
 
+def volume_icon(color="#ffffff", size=64, muted=False):
+    pm, p = _canvas(size)
+    c = QColor(color)
+    p.setPen(Qt.NoPen)
+    p.setBrush(c)
+    bx, by = size * 0.18, size * 0.39
+    bw, bh = size * 0.14, size * 0.22
+    p.drawRect(QRectF(bx, by, bw, bh))                 # speaker body
+    cone = QPainterPath()                              # speaker cone
+    cone.moveTo(bx + bw, by)
+    cone.lineTo(bx + bw + size * 0.17, by - size * 0.13)
+    cone.lineTo(bx + bw + size * 0.17, by + bh + size * 0.13)
+    cone.lineTo(bx + bw, by + bh)
+    cone.closeSubpath()
+    p.drawPath(cone)
+    if muted:
+        pen = QPen(c)
+        pen.setWidthF(size * 0.07)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.drawLine(QPointF(size * 0.62, size * 0.36), QPointF(size * 0.84, size * 0.64))
+        p.drawLine(QPointF(size * 0.84, size * 0.36), QPointF(size * 0.62, size * 0.64))
+    else:
+        pen = QPen(c)
+        pen.setWidthF(size * 0.06)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawArc(QRectF(size * 0.50, size * 0.32, size * 0.20, size * 0.36), -55 * 16, 110 * 16)
+        p.drawArc(QRectF(size * 0.50, size * 0.22, size * 0.34, size * 0.56), -55 * 16, 110 * 16)
+    p.end()
+    return QIcon(pm)
+
+
 def close_icon(color="#ffffff", size=64):
     pm, p = _canvas(size)
     pen = QPen(QColor(color))

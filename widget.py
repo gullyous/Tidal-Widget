@@ -216,6 +216,12 @@ class LyricsView(QWidget):
         self._msg = "" if self._lines else "No synced lyrics for this track"
         self.update()
 
+    def set_loading(self):
+        self._lines = []
+        self._active = -1
+        self._msg = "Finding lyrics..."
+        self.update()
+
     def has_lyrics(self):
         return bool(self._lines)
 
@@ -920,9 +926,12 @@ class NowPlayingWidget(QWidget):
         if (title, artist) != (self._cur_title, self._cur_artist):
             return  # stale result for a track that already changed
         self.e_lyrics.set_lines(lines)
-        self.e_lyrics_btn.setVisible(bool(lines))
-        if not lines and self._lyrics_mode:
-            self._set_lyrics_mode(False)
+        if lines:
+            self.e_lyrics_btn.show()
+        else:
+            if self._lyrics_mode:
+                self._set_lyrics_mode(False)
+            self.e_lyrics_btn.hide()
 
     def _toggle_lyrics(self):
         self._set_lyrics_mode(not self._lyrics_mode)
@@ -1048,6 +1057,11 @@ class NowPlayingWidget(QWidget):
         if track_changed:
             self._liked = False        # a new track starts unliked in the UI
             self.e_quality.hide()      # clear the quality badge until it resolves
+            if self._lyrics_mode:
+                self.e_lyrics.set_loading()
+            else:
+                self.e_lyrics_btn.hide()   # show only once THIS track's lyrics resolve
+                self.e_lyrics.set_lines([])
         self._cur_title, self._cur_artist = title, artist
         self._cur_album = info.get("album") or ""
         self._refresh_heart()

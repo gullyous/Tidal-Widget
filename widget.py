@@ -467,7 +467,7 @@ class NowPlayingWidget(QWidget):
         self.c_next = self._round_btn(icons.next_icon(INK), self.next_clicked.emit, 30)
 
         self.c_lyrics_btn = self._round_btn(icons.lyrics_icon(SUBTLE),
-                                            self._open_lyrics, 26)
+                                            self._open_lyrics, 32)
         self.c_lyrics_btn.hide()   # signifier; shown while a track plays
         btns = QHBoxLayout()
         btns.setSpacing(6)
@@ -536,7 +536,7 @@ class NowPlayingWidget(QWidget):
         self.e_lyrics.seek_requested.connect(self.seek_clicked)
         self.e_lyrics.hide()
         self.e_lyrics_btn = self._round_btn(icons.lyrics_icon(SUBTLE),
-                                            self._toggle_lyrics, 26)
+                                            self._toggle_lyrics, 30)
         self.e_lyrics_btn.hide()   # shown only when synced lyrics are available
 
         times = QHBoxLayout()

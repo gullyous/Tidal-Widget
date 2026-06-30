@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 import config
 import icons
+import settings
 
 # --- geometry --------------------------------------------------------------
 MARGIN = 18          # transparent padding so the drop shadow has room
@@ -316,6 +317,7 @@ class NowPlayingWidget(QWidget):
         self._build_tray()
 
         self._set_mode(self._expanded, anchor=False)
+        self._restore_placement()
         self._move_to_corner()
 
         self._timer = QTimer(self)
@@ -696,6 +698,9 @@ class NowPlayingWidget(QWidget):
         act_web = QAction("TIDAL web player", self)
         act_web.triggered.connect(self._open_web_player)
         menu.addAction(act_web)
+        act_copy = QAction("Copy now playing", self)
+        act_copy.triggered.connect(self._copy_now_playing)
+        menu.addAction(act_copy)
         menu.addSeparator()
 
         act_check_updates = QAction("Check for updates...", self)
@@ -825,6 +830,11 @@ class NowPlayingWidget(QWidget):
                 continue
         self._tray_msg("Opening TIDAL. Change playlists or streaming quality "
                        "in the TIDAL app.", "TIDAL")
+
+    def _copy_now_playing(self):
+        if self._cur_title:
+            text = f"{self._cur_artist} - {self._cur_title}".strip(" -")
+            QGuiApplication.clipboard().setText(text)
 
     def _open_web_player(self):
         # Open TIDAL's web player as a chromeless browser "app window": it acts
@@ -1069,6 +1079,21 @@ class NowPlayingWidget(QWidget):
     def _move_to_corner(self):
         self._snap_to_corner(self._corner)
 
+    def _restore_placement(self):
+        # Return to the last monitor + corner across runs.
+        try:
+            scr_name, corner = settings.get_placement()
+            if corner in ("tl", "tr", "bl", "br"):
+                self._corner = corner
+            if scr_name:
+                for scr in QGuiApplication.screens():
+                    if scr.name() == scr_name:
+                        c = scr.availableGeometry().center()
+                        self.move(c.x(), c.y())   # land on that monitor first
+                        break
+        except Exception:
+            pass
+
     # ---- window drag + double-click + context menu -------------------------
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -1085,6 +1110,10 @@ class NowPlayingWidget(QWidget):
         self._drag = None
         if was_dragging:
             self._snap_to_corner(self._nearest_corner())
+            try:
+                settings.set_placement(self._current_screen().name(), self._corner)
+            except Exception:
+                pass
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -1104,6 +1133,9 @@ class NowPlayingWidget(QWidget):
         act_web = QAction("TIDAL web player", self)
         act_web.triggered.connect(self._open_web_player)
         menu.addAction(act_web)
+        act_copy = QAction("Copy now playing", self)
+        act_copy.triggered.connect(self._copy_now_playing)
+        menu.addAction(act_copy)
         if not self._logged_in:
             act_signin = QAction("Sign in to TIDAL", self)
             act_signin.setToolTip(SIGNIN_HINT)

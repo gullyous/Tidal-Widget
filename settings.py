@@ -81,6 +81,19 @@ def save(values: dict):
     s.sync()
 
 
+def set_placement(screen, corner):
+    """Persist the last screen name + corner so the widget returns there."""
+    s = _store()
+    s.setValue("place_screen", screen)
+    s.setValue("place_corner", corner)
+    s.sync()
+
+
+def get_placement():
+    s = _store()
+    return (s.value("place_screen", "", str), s.value("place_corner", "", str))
+
+
 # ---- run at Windows startup (per-user HKCU Run key) -----------------------
 _RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_NAME = "TidalNowPlaying"

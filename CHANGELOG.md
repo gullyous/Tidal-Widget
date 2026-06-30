@@ -11,6 +11,8 @@ to [Semantic Versioning](https://semver.org/).
   sampled from the current cover, with a contrast-aware icon. Off by default.
 - Tooltips (showing the hotkey) and accessible names on the transport buttons;
   capability-disabled controls now render visibly inert instead of identical.
+- Remembers the monitor + corner you left the widget on, and restores it on launch.
+- "Copy now playing" (tray and right-click menus) copies "Artist - Title" to the clipboard.
 
 ### Changed
 - The card's ambient background is cached and rebuilt only when the size or

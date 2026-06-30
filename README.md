@@ -30,6 +30,7 @@ no API keys and no setup. Signing in is only needed for the optional extras
 - Seekable progress bar (drag to scrub) in the expanded view
 - Shuffle and repeat toggles, shown when the current source supports them
 - System-tray icon with full controls and quit
+- Volume slider (in both the compact bar and the expanded card) for the playing app, via Windows Core Audio, with a mute toggle and a system-volume fallback
 - Heart button to favorite the playing track to your TIDAL collection (optional, one-time sign-in)
 - Quality badge showing what the track is available in on TIDAL (MAX / Hi-Res / Lossless / High, plus Atmos)
 - Adaptive controls: actions the current source doesn't support are greyed out or hidden
@@ -83,7 +84,7 @@ Double-click **`build.bat`**, or run:
 ```bat
 pip install -r requirements.txt pyinstaller
 python make_icon.py
-pyinstaller --noconfirm --onefile --windowed --name TidalNowPlaying --icon icon.ico --collect-all winsdk --collect-all tidalapi --collect-all pynput main.py
+pyinstaller --noconfirm --clean TidalNowPlaying.spec
 ```
 
 The result is `dist\TidalNowPlaying.exe`.
@@ -96,6 +97,7 @@ The result is `dist\TidalNowPlaying.exe`.
 - **Right-click the widget:** the same management actions (Settings, Open TIDAL, check for updates, sign in, hide, expand/compact, quit), without the transport controls, since those are already buttons on the widget.
 - **TIDAL web player:** the tray/right-click menu's **TIDAL web player** item opens listen.tidal.com as a standalone window (via Edge/Chrome). Handy if you don't have the desktop app, the widget reads it through Windows media controls, so keep **Follow other apps** on.
 - **Seek:** in expanded mode, drag the progress bar to jump to any point in the track.
+- **Volume:** a slider under the compact controls (and in the expanded card, with a mute button) sets the playing app's volume (TIDAL, or your browser for the web player), falling back to the system volume. It appears only when a controllable audio session is found.
 - **Shuffle / repeat:** toggle buttons appear in expanded mode when the player supports them. (TIDAL does not expose shuffle/repeat to Windows, so they stay hidden for TIDAL.)
 - **Settings:** right-click the tray icon (or the widget) and choose **Settings...** for accent, opacity, refresh interval, run-at-startup, hotkeys, and update checks. An **About** tab shows the version, links, and licenses.
 - **Global hotkeys** (when enabled): Ctrl+Alt+Space play/pause, Ctrl+Alt+Left/Right prev/next, Ctrl+Alt+L like, Ctrl+Alt+H show/hide.
@@ -161,10 +163,11 @@ if you prefer.
 | `settings_dialog.py` | The preferences dialog. |
 | `hotkeys.py` | Optional global hotkeys (pynput). |
 | `updater.py` | Optional in-app update check + self-replace install (GitHub releases). |
+| `volume_backend.py` | Optional per-app volume control via Windows Core Audio (pycaw), on its own COM thread. |
 | `make_icon.py` | Generates `icon.ico` for the packaged app. |
 | `build.bat` | One-click build of the standalone `.exe`. |
 | `run.bat` / `run-debug.bat` | Run from source (with or without a console). |
-| `requirements.txt` | Python dependencies (PySide6, winsdk, tidalapi, pynput). |
+| `requirements.txt` | Python dependencies (PySide6, winsdk, tidalapi, pynput, pycaw). |
 
 ## Troubleshooting
 
@@ -199,6 +202,7 @@ Note: current builds are not code-signed, so Windows SmartScreen may show an
 - [winsdk](https://github.com/pywinrt/python-winsdk) (Python WinRT projection), licensed under MIT
 - [tidalapi](https://github.com/tamland/python-tidal) (unofficial TIDAL API client) for the optional favorite feature, licensed under LGPLv3
 - [pynput](https://github.com/moses-palmer/pynput) for optional global hotkeys, licensed under LGPLv3
+- [pycaw](https://github.com/AndreMiras/pycaw) for the optional per-app volume control (Windows Core Audio), licensed under MIT
 - Icons are drawn at runtime with QPainter, so there are no image assets to ship
 
 Because the packaged `.exe` bundles PySide6 (LGPLv3), the full source for this

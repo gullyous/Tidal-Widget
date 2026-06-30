@@ -16,6 +16,7 @@ import config
 import icons
 import settings
 from hotkeys import HotkeyManager
+from lyrics_backend import LyricsFetcher
 from media_backend import MediaWorker
 from settings_dialog import SettingsDialog
 from tidal_likes import TidalLiker
@@ -65,6 +66,11 @@ def main():
     widget.quality_requested.connect(liker.quality)
     liker.quality_result.connect(widget.on_quality)
     widget.on_login_state(liker.signed_in(), "")  # hide "Sign in" if already signed in
+
+    # synced lyrics (LRCLIB, free / keyless)
+    lyrics = LyricsFetcher()
+    widget.lyrics_requested.connect(lyrics.fetch)
+    lyrics.lyrics_ready.connect(widget.on_lyrics)
 
     # in-app auto-update (GitHub releases). Network work runs on a background
     # thread inside Updater; signals are delivered on the GUI thread.

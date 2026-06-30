@@ -116,6 +116,18 @@ def volume_icon(color="#ffffff", size=64, muted=False):
     return QIcon(pm)
 
 
+def lyrics_icon(color="#ffffff", size=64):
+    pm, p = _canvas(size)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    x = size * 0.24
+    for y, w in ((0.30, 0.46), (0.46, 0.34), (0.62, 0.50)):
+        p.drawRoundedRect(QRectF(x, size * y, size * w, size * 0.085),
+                          size * 0.04, size * 0.04)
+    p.end()
+    return QIcon(pm)
+
+
 def close_icon(color="#ffffff", size=64):
     pm, p = _canvas(size)
     pen = QPen(QColor(color))

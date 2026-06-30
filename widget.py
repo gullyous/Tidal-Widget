@@ -36,7 +36,7 @@ import webbrowser
 from PySide6.QtCore import Qt, QSize, QRectF, QPointF, QTimer, Signal
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QPainterPath, QPen, QLinearGradient,
-    QAction, QGuiApplication,
+    QAction, QGuiApplication, QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QFrame, QStackedWidget, QSizePolicy, QSlider,
@@ -194,6 +194,84 @@ class ProgressLine(QWidget):
             e.accept()
 
 
+class LyricsView(QWidget):
+    """Karaoke-style synced lyrics: the active line is centred and accented,
+    neighbours fade with distance; click a line to seek to it."""
+
+    seek_requested = Signal(float)   # absolute seconds
+    LINE_H = 30
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._lines = []      # [(seconds, text)]
+        self._active = -1
+        self._msg = ""
+        self.accent = config.ACCENT
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def set_lines(self, lines):
+        self._lines = list(lines or [])
+        self._active = -1
+        self._msg = "" if self._lines else "No synced lyrics for this track"
+        self.update()
+
+    def has_lyrics(self):
+        return bool(self._lines)
+
+    def set_position(self, sec):
+        a = -1
+        for i, (t, _txt) in enumerate(self._lines):
+            if t <= sec + 0.15:
+                a = i
+            else:
+                break
+        if a != self._active:
+            self._active = a
+            self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        w, h = self.width(), self.height()
+        if not self._lines:
+            p.setPen(QColor(SUBTLE))
+            f = p.font(); f.setPointSize(10); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, self._msg)
+            p.end()
+            return
+        cy = h / 2
+        act = self._active if self._active >= 0 else 0
+        for i, (_t, txt) in enumerate(self._lines):
+            y = cy + (i - act) * self.LINE_H
+            if y < -self.LINE_H or y > h + self.LINE_H:
+                continue
+            f = p.font()
+            if i == self._active:
+                p.setPen(QColor(self.accent))
+                f.setPointSize(12)
+                f.setBold(True)
+            else:
+                col = QColor(255, 255, 255)
+                col.setAlpha(max(35, 170 - abs(i - act) * 38))
+                p.setPen(col)
+                f.setPointSize(10)
+                f.setBold(False)
+            p.setFont(f)
+            line = QFontMetrics(f).elidedText(txt, Qt.ElideRight, w - 24)
+            p.drawText(QRectF(12, y - self.LINE_H / 2, w - 24, self.LINE_H),
+                       Qt.AlignCenter, line)
+        p.end()
+
+    def mousePressEvent(self, e):
+        if not self._lines:
+            return
+        act = self._active if self._active >= 0 else 0
+        idx = act + round((e.position().y() - self.height() / 2) / self.LINE_H)
+        if 0 <= idx < len(self._lines):
+            self.seek_requested.emit(self._lines[idx][0])
+
+
 class Card(QFrame):
     """The visible card. Paints the ambient album-art background itself."""
 
@@ -278,6 +356,7 @@ class NowPlayingWidget(QWidget):
     check_updates_requested = Signal()     # tray "Check for updates..." (loud check)
     volume_changed = Signal(float)         # 0.0-1.0, from the volume slider
     mute_toggled = Signal(bool)            # desired mute state
+    lyrics_requested = Signal(str, str, str, float)  # title, artist, album, duration
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -303,6 +382,7 @@ class NowPlayingWidget(QWidget):
         self._muted = False         # current app/system mute (from volume backend)
         self._vol_updating = False  # guard: ignore slider signals during programmatic set
         self._accent_dyn = None     # accent tinted from album art (auto-accent)
+        self._lyrics_mode = False   # lyrics panel showing in the expanded view
         self._shuffle = False
         self._repeat = 0   # 0 none, 1 track, 2 list
 
@@ -442,9 +522,18 @@ class NowPlayingWidget(QWidget):
         self.e_pos.setObjectName("time")
         self.e_dur = QLabel("--:--")
         self.e_dur.setObjectName("time")
+        self.e_lyrics = LyricsView()
+        self.e_lyrics.seek_requested.connect(self.seek_clicked)
+        self.e_lyrics.hide()
+        self.e_lyrics_btn = self._round_btn(icons.lyrics_icon(SUBTLE),
+                                            self._toggle_lyrics, 26)
+        self.e_lyrics_btn.hide()   # shown only when synced lyrics are available
+
         times = QHBoxLayout()
         times.setContentsMargins(0, 0, 0, 0)
         times.addWidget(self.e_pos)
+        times.addStretch(1)
+        times.addWidget(self.e_lyrics_btn)
         times.addStretch(1)
         times.addWidget(self.e_dur)
 
@@ -496,6 +585,7 @@ class NowPlayingWidget(QWidget):
         col.addWidget(self.e_title)
         col.addWidget(self.e_artist)
         col.addLayout(quality_row)
+        col.addWidget(self.e_lyrics, 100)   # fills the cover area when in lyrics mode
         col.addStretch(1)
         col.addWidget(self.progress)
         col.addLayout(times)
@@ -600,8 +690,13 @@ class NowPlayingWidget(QWidget):
 
     def _apply_accent(self):
         """Push the effective accent through every accent-colored element."""
-        self.progress.accent = self._effective_accent()
+        acc = self._effective_accent()
+        self.progress.accent = acc
         self.progress.update()
+        self.e_lyrics.accent = acc
+        self.e_lyrics.update()
+        if self._lyrics_mode:
+            self.e_lyrics_btn.setIcon(icons.lyrics_icon(acc))
         self._apply_style()
         self._set_play_icon(self._playing)
         self._refresh_shuffle_repeat()
@@ -820,6 +915,28 @@ class NowPlayingWidget(QWidget):
         else:
             self.e_quality.hide()
 
+    # ---- lyrics ------------------------------------------------------------
+    def on_lyrics(self, title, artist, lines):
+        if (title, artist) != (self._cur_title, self._cur_artist):
+            return  # stale result for a track that already changed
+        self.e_lyrics.set_lines(lines)
+        self.e_lyrics_btn.setVisible(bool(lines))
+        if not lines and self._lyrics_mode:
+            self._set_lyrics_mode(False)
+
+    def _toggle_lyrics(self):
+        self._set_lyrics_mode(not self._lyrics_mode)
+
+    def _set_lyrics_mode(self, on):
+        self._lyrics_mode = on
+        self.e_cover.setVisible(not on)
+        self.e_quality.setVisible(not on and bool(self.e_quality.text()))
+        self.e_lyrics.setVisible(on)
+        self.e_lyrics_btn.setIcon(
+            icons.lyrics_icon(self._effective_accent() if on else SUBTLE))
+        if on:
+            self.e_lyrics.set_position(self._pos)
+
     def _open_tidal(self):
         for opener in (lambda: webbrowser.open("tidal://"),
                        lambda: os.startfile("tidal://")):
@@ -918,6 +1035,10 @@ class NowPlayingWidget(QWidget):
             self.e_shuffle.hide()
             self.e_repeat.hide()
             self.e_quality.hide()
+            self.e_lyrics.set_lines([])
+            self.e_lyrics_btn.hide()
+            if self._lyrics_mode:
+                self._set_lyrics_mode(False)
             self._update_tray(None, None, available=False)
             return
 
@@ -932,6 +1053,8 @@ class NowPlayingWidget(QWidget):
         self._refresh_heart()
         if track_changed:
             self.quality_requested.emit(title, artist)
+            self.lyrics_requested.emit(title, artist, self._cur_album,
+                                       float(info.get("duration") or 0))
         self.c_title.setFullText(title)
         self.e_title.setFullText(title)
         self.c_artist.setFullText(artist)
@@ -1015,8 +1138,10 @@ class NowPlayingWidget(QWidget):
         if not self._expanded:
             return
         if self._playing and self._dur > 0:
-            est = self._pos + (time.monotonic() - self._anchor)
-            self._update_progress(min(est, self._dur))
+            est = min(self._pos + (time.monotonic() - self._anchor), self._dur)
+            self._update_progress(est)
+            if self._lyrics_mode:
+                self.e_lyrics.set_position(est)
 
     def _update_timer(self):
         # The 200ms progress timer only does visible work when playing AND

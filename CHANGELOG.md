@@ -12,6 +12,12 @@ to [Semantic Versioning](https://semver.org/).
   the toggle dims (disabled, with a "No lyrics for this track" tooltip) when a
   track has none, so it won't open an empty panel. The lyrics button is on both
   the compact bar and the expanded view; on compact it expands straight in.
+- **Plain-lyrics fallback**: tracks with no time-synced LRC now show their plain
+  (unsynced) lyrics as a scroll-through block instead of nothing, so the lyrics
+  button lights up for many more tracks.
+- **Sync nudge**: scroll on the lyrics panel to shift synced timings earlier or
+  later when a track's LRC drifts (a small "sync +0.3s" badge shows the amount);
+  middle-click resets it. The offset is remembered across runs (`LYRICS_OFFSET`).
 - Optional **"Tint accent from album art"** (Settings -> Appearance): the play
   button, progress bar, quality badge and volume slider take a vivid color
   sampled from the current cover, with a contrast-aware icon. Off by default.
@@ -23,6 +29,11 @@ to [Semantic Versioning](https://semver.org/).
 ### Changed
 - The card's ambient background is cached and rebuilt only when the size or
   artwork changes (not on every repaint), for smoother dragging.
+
+### Fixed
+- A transient lyrics lookup failure (offline, timeout, or a server error) is no
+  longer cached as "no lyrics", so a track isn't stuck lyric-less until restart;
+  the lookup is retried the next time you land on that track.
 
 ## [1.1.1] - 2026-06-29
 

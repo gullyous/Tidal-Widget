@@ -26,6 +26,7 @@ ORG, APP = "TidalWidget", "TidalWidget"
 FIELDS = {
     "accent": ("ACCENT", str),
     "auto_accent": ("AUTO_ACCENT", bool),
+    "lyrics_offset": ("LYRICS_OFFSET", float),
     "background_opacity": ("BACKGROUND_OPACITY", float),
     "window_opacity": ("WINDOW_OPACITY", float),
     "always_on_top": ("ALWAYS_ON_TOP", bool),

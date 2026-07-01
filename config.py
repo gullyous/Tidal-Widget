@@ -26,6 +26,11 @@ ACCENT = "#39d6e0"
 # the art is too monochrome to pick a vivid color.
 AUTO_ACCENT = False
 
+# Fine-tune how far ahead (+) or behind (-) synced lyrics run, in seconds.
+# Nudge it live by scrolling on the lyrics panel (middle-click to reset); the
+# value is remembered across runs. Only affects time-synced (karaoke) lyrics.
+LYRICS_OFFSET = 0.0
+
 # Panel transparency (0.0 = invisible, 1.0 = solid). The card background and
 # album-art ambience are painted at this opacity so the desktop shows through,
 # while text, cover, and buttons stay fully opaque and readable ("dark glass").

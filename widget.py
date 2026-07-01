@@ -195,29 +195,46 @@ class ProgressLine(QWidget):
 
 
 class LyricsView(QWidget):
-    """Karaoke-style synced lyrics: the active line is centred and accented,
-    neighbours fade with distance; click a line to seek to it."""
+    """Synced (karaoke) or plain lyrics.
+
+    Synced lyrics: the active line is centred and accented, neighbours fade with
+    distance; click a line to seek to it, scroll to nudge the sync offset when a
+    track's timings drift, and middle-click to reset that nudge. Plain (unsynced)
+    lyrics have no timestamps, so they show as a static block you scroll
+    through."""
 
     seek_requested = Signal(float)   # absolute seconds
+    offset_changed = Signal(float)   # sync offset (s); the widget persists it
     LINE_H = 34
+    STEP = 0.1        # seconds per scroll notch when nudging the sync offset
+    MAX_OFFSET = 5.0  # clamp for the sync nudge
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._lines = []      # [(seconds, text)]
+        self._lines = []      # [(seconds_or_None, text)]; None time = plain line
+        self._synced = False  # True once the lines carry timestamps (karaoke)
         self._active = -1
         self._msg = ""
+        self._scroll = 0.0    # px scroll position for plain (unsynced) lyrics
+        self._last_sec = None  # last playback position seen (re-highlight on nudge)
+        self._offset = float(getattr(config, "LYRICS_OFFSET", 0.0) or 0.0)
         self.accent = config.ACCENT
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setToolTip("Scroll to nudge lyric sync • middle-click to reset")
 
     def set_lines(self, lines):
         self._lines = list(lines or [])
+        self._synced = any(t is not None for t, _txt in self._lines)
         self._active = -1
-        self._msg = "" if self._lines else "No synced lyrics for this track"
+        self._scroll = 0.0
+        self._msg = "" if self._lines else "No lyrics for this track"
+        self.setCursor(Qt.PointingHandCursor if self._synced else Qt.ArrowCursor)
         self.update()
 
     def set_loading(self):
         self._lines = []
+        self._synced = False
         self._active = -1
         self._msg = "Finding lyrics..."
         self.update()
@@ -226,15 +243,66 @@ class LyricsView(QWidget):
         return bool(self._lines)
 
     def set_position(self, sec):
+        self._last_sec = sec
+        if not self._synced:
+            return
+        eff = sec + self._offset
         a = -1
         for i, (t, _txt) in enumerate(self._lines):
-            if t <= sec + 0.15:
+            if t is not None and t <= eff + 0.15:
                 a = i
             else:
                 break
         if a != self._active:
             self._active = a
             self.update()
+
+    def _max_scroll(self):
+        content = len(self._lines) * self.LINE_H
+        return max(0.0, content - self.height() + self.LINE_H)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if not self._synced:  # keep plain-lyrics scroll in range if the view grows
+            self._scroll = min(self._scroll, self._max_scroll())
+
+    def wheelEvent(self, e):
+        if not self._lines:
+            return
+        dy = e.angleDelta().y()
+        if dy == 0:
+            return
+        if self._synced:
+            step = self.STEP if dy > 0 else -self.STEP
+            self._offset = max(-self.MAX_OFFSET,
+                               min(self.MAX_OFFSET, round(self._offset + step, 2)))
+            self.offset_changed.emit(self._offset)
+            if self._last_sec is not None:
+                self.set_position(self._last_sec)
+            self.update()
+        else:
+            self._scroll = max(0.0, min(self._max_scroll(),
+                                        self._scroll - (dy / 120.0) * self.LINE_H * 2))
+            self.update()
+        e.accept()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MiddleButton:
+            if self._synced and self._offset:
+                self._offset = 0.0
+                self.offset_changed.emit(0.0)
+                if self._last_sec is not None:
+                    self.set_position(self._last_sec)
+                self.update()
+            return
+        if e.button() != Qt.LeftButton or not self._synced:
+            return
+        act = self._active if self._active >= 0 else 0
+        idx = act + round((e.position().y() - self.height() / 2) / self.LINE_H)
+        if 0 <= idx < len(self._lines):
+            t = self._lines[idx][0]
+            if t is not None:
+                self.seek_requested.emit(max(0.0, t - self._offset))
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -246,6 +314,18 @@ class LyricsView(QWidget):
             p.drawText(self.rect(), Qt.AlignCenter, self._msg)
             p.end()
             return
+        if self._synced:
+            self._paint_synced(p, w, h)
+        else:
+            self._paint_plain(p, w, h)
+        if self._synced and abs(self._offset) >= 0.05:
+            f = p.font(); f.setPointSize(9); f.setBold(False); p.setFont(f)
+            p.setPen(QColor(self.accent))
+            p.drawText(QRectF(0, 4, w - 8, 16), Qt.AlignRight | Qt.AlignTop,
+                       f"sync {self._offset:+.1f}s")
+        p.end()
+
+    def _paint_synced(self, p, w, h):
         cy = h / 2
         act = self._active if self._active >= 0 else 0
         for i, (_t, txt) in enumerate(self._lines):
@@ -267,15 +347,19 @@ class LyricsView(QWidget):
             line = QFontMetrics(f).elidedText(txt, Qt.ElideRight, w - 24)
             p.drawText(QRectF(12, y - self.LINE_H / 2, w - 24, self.LINE_H),
                        Qt.AlignCenter, line)
-        p.end()
 
-    def mousePressEvent(self, e):
-        if not self._lines:
-            return
-        act = self._active if self._active >= 0 else 0
-        idx = act + round((e.position().y() - self.height() / 2) / self.LINE_H)
-        if 0 <= idx < len(self._lines):
-            self.seek_requested.emit(self._lines[idx][0])
+    def _paint_plain(self, p, w, h):
+        f = p.font(); f.setPointSize(12); f.setBold(False); p.setFont(f)
+        p.setPen(QColor(235, 235, 240))
+        fm = QFontMetrics(f)
+        top = 12 - self._scroll
+        for i, (_t, txt) in enumerate(self._lines):
+            y = top + i * self.LINE_H
+            if y < -self.LINE_H or y > h + self.LINE_H:
+                continue
+            line = fm.elidedText(txt, Qt.ElideRight, w - 24)
+            p.drawText(QRectF(12, y, w - 24, self.LINE_H),
+                       Qt.AlignCenter, line)
 
 
 class Card(QFrame):
@@ -410,6 +494,15 @@ class NowPlayingWidget(QWidget):
         self._timer.setInterval(200)
         self._timer.timeout.connect(self._tick_progress)
         # started on demand by _update_timer() (only while playing + expanded + visible)
+
+        # Debounce disk writes while the user scrolls the lyrics sync nudge.
+        # (_pending_offset is set for real in _on_lyrics_offset before each save.)
+        self._pending_offset = 0.0
+        self._offset_save = QTimer(self)
+        self._offset_save.setSingleShot(True)
+        self._offset_save.setInterval(500)
+        self._offset_save.timeout.connect(self._save_lyrics_offset)
+
         self._set_tooltips()
 
     # ---- UI construction ---------------------------------------------------
@@ -534,10 +627,11 @@ class NowPlayingWidget(QWidget):
         self.e_dur.setObjectName("time")
         self.e_lyrics = LyricsView()
         self.e_lyrics.seek_requested.connect(self.seek_clicked)
+        self.e_lyrics.offset_changed.connect(self._on_lyrics_offset)
         self.e_lyrics.hide()
         self.e_lyrics_btn = self._round_btn(icons.lyrics_icon(SUBTLE),
                                             self._toggle_lyrics, 30)
-        self.e_lyrics_btn.hide()   # shown only when synced lyrics are available
+        self.e_lyrics_btn.hide()   # shown when the current track has lyrics
 
         times = QHBoxLayout()
         times.setContentsMargins(0, 0, 0, 0)
@@ -937,6 +1031,18 @@ class NowPlayingWidget(QWidget):
             b.setToolTip(tip)
         if not lines and self._lyrics_mode:
             self._set_lyrics_mode(False)
+
+    def _on_lyrics_offset(self, val):
+        # Remember the nudged sync offset, but coalesce rapid scrolls into one
+        # write (the timer restarts on each notch and only saves once it settles).
+        self._pending_offset = float(val)
+        self._offset_save.start()
+
+    def _save_lyrics_offset(self):
+        try:
+            settings.save({"lyrics_offset": self._pending_offset})
+        except Exception:
+            pass
 
     def _toggle_lyrics(self):
         self._set_lyrics_mode(not self._lyrics_mode)

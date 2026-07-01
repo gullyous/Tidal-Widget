@@ -5,6 +5,8 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-01
+
 ### Added
 - **Synced lyrics**: a karaoke-style panel in the expanded view (toggle by the
   times row). The active line is centered and accented and auto-scrolls with the

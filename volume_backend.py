@@ -31,6 +31,7 @@ Qt contract:
 
 import queue
 import threading
+import time
 
 from PySide6.QtCore import QObject, Signal
 
@@ -124,35 +125,71 @@ def _endpoint():
     return cast(iface, POINTER(IAudioEndpointVolume))
 
 
-def _get_state(source):
-    scope, vols = _pick(source)
-    if vols:
-        v = vols[0]
-        app_level = float(v.GetMasterVolume())
-        app_mute = bool(v.GetMute())
+# ---- COM object cache -------------------------------------------------------
+# _pick() enumerates every audio session (plus a process lookup each) and
+# _endpoint() activates a device interface; doing that per slider tick made
+# dragging lag by seconds. Cache the COM POINTERS for a short TTL: reads on a
+# cached pointer still return live values, the TTL only bounds how long a
+# stale session list (app closed, device swapped) can linger. Any COM error
+# clears the cache so the next call re-enumerates.
+_CACHE_TTL = 2.0
+
+
+def _cached(cache, source):
+    if (cache.get("source") != source or "vols" not in cache
+            or time.monotonic() - cache.get("t", 0.0) > _CACHE_TTL):
+        scope, vols = _pick(source)
         try:
             ep = _endpoint()
+        except Exception:
+            ep = None
+        cache.clear()
+        cache.update(source=source, scope=scope, vols=vols, ep=ep,
+                     t=time.monotonic())
+    return cache
+
+
+def _get_state(source, cache):
+    def read():
+        c = _cached(cache, source)
+        vols, ep, scope = c["vols"], c["ep"], c["scope"]
+        if vols:
+            v = vols[0]
+            app_level = float(v.GetMasterVolume())
+            app_mute = bool(v.GetMute())
             if ep is not None:
                 # What you HEAR is the app session scaled by the system master.
                 # Reporting the product keeps the slider in step with keyboard
                 # volume keys and the Windows mixer (which change the master).
                 master = float(ep.GetMasterVolumeLevelScalar())
                 return (app_level * master, app_mute or bool(ep.GetMute()), scope)
-        except Exception:
-            pass
-        return (app_level, app_mute, scope)
-    ep = _endpoint()
-    if ep is not None:
-        return (float(ep.GetMasterVolumeLevelScalar()), bool(ep.GetMute()), "System")
-    return None
+            return (app_level, app_mute, scope)
+        if ep is not None:
+            return (float(ep.GetMasterVolumeLevelScalar()), bool(ep.GetMute()),
+                    "System")
+        return None
+    try:
+        return read()
+    except Exception:
+        cache.clear()   # stale COM pointer (app exited / device changed)
+        return read()   # one fresh retry; a second failure raises to caller
 
 
-def _set_volume(source, level):
-    scope, vols = _pick(source)
-    if vols:
-        target = level
-        try:
-            ep = _endpoint()
+def _ramp_steps(cur, target, gentle):
+    """The write sequence for a volume move: a short glide for a large jump
+    (so slamming the slider isn't an abrupt loudness step), else one write."""
+    if not gentle or abs(target - cur) <= 0.10:
+        return [target]
+    return [cur + (target - cur) * f for f in (0.25, 0.5, 0.75, 1.0)]
+
+
+def _set_volume(source, level, cache, gentle=False):
+    def write():
+        c = _cached(cache, source)
+        vols, ep = c["vols"], c["ep"]
+        if vols:
+            target = level
+            cur = float(vols[0].GetMasterVolume())
             if ep is not None:
                 master = float(ep.GetMasterVolumeLevelScalar())
                 if master < 0.01:
@@ -164,35 +201,66 @@ def _set_volume(source, level):
                 # level, the app session is set relative to the master ceiling
                 # (dragging to 80% with master at 50% pins the app at 100%).
                 target = level / master
-        except Exception:
-            pass
-        target = max(0.0, min(1.0, target))
-        for v in vols:
-            v.SetMasterVolume(target, None)
-        return
-    ep = _endpoint()
-    if ep is not None:
-        ep.SetMasterVolumeLevelScalar(level, None)
+            target = max(0.0, min(1.0, target))
+            steps = _ramp_steps(cur, target, gentle)
+            for s in steps:
+                for v in vols:
+                    v.SetMasterVolume(s, None)
+                if len(steps) > 1:
+                    time.sleep(0.02)
+            return
+        if ep is not None:
+            cur = float(ep.GetMasterVolumeLevelScalar())
+            steps = _ramp_steps(cur, max(0.0, min(1.0, level)), gentle)
+            for s in steps:
+                ep.SetMasterVolumeLevelScalar(s, None)
+                if len(steps) > 1:
+                    time.sleep(0.02)
+    try:
+        write()
+    except Exception:
+        cache.clear()
+        write()
 
 
-def _set_mute(source, muted):
-    scope, vols = _pick(source)
-    if vols:
-        for v in vols:
-            v.SetMute(1 if muted else 0, None)
-        if not muted:
-            # Unmuting the app is inaudible through a muted master; the click
-            # means "I want sound", so lift a master mute too.
-            try:
-                ep = _endpoint()
-                if ep is not None and ep.GetMute():
-                    ep.SetMute(0, None)
-            except Exception:
-                pass
-        return
-    ep = _endpoint()
-    if ep is not None:
-        ep.SetMute(1 if muted else 0, None)
+def _set_mute(source, muted, cache):
+    def write():
+        c = _cached(cache, source)
+        vols, ep = c["vols"], c["ep"]
+        if vols:
+            for v in vols:
+                v.SetMute(1 if muted else 0, None)
+            if not muted and ep is not None and ep.GetMute():
+                # Unmuting the app is inaudible through a muted master; the
+                # click means "I want sound", so lift a master mute too.
+                ep.SetMute(0, None)
+            return
+        if ep is not None:
+            ep.SetMute(1 if muted else 0, None)
+    try:
+        write()
+    except Exception:
+        cache.clear()
+        write()
+
+
+def _coalesce(cmds):
+    """The surviving operations from a drained backlog: only the LAST "set" and
+    the LAST "mute" matter, executed in their original relative order (a mute
+    clicked before a slam must still land before the volume moves)."""
+    last_set = last_mute = None
+    set_idx = mute_idx = -1
+    for i, c in enumerate(cmds):
+        if c[0] == "set":
+            last_set, set_idx = c[1], i
+        elif c[0] == "mute":
+            last_mute, mute_idx = c[1], i
+    ops = []
+    for idx, kind, val in sorted([(set_idx, "set", last_set),
+                                  (mute_idx, "mute", last_mute)]):
+        if idx >= 0:
+            ops.append((kind, val))
+    return ops
 
 
 # ---- controller ------------------------------------------------------------
@@ -241,7 +309,7 @@ class VolumeController(QObject):
             self.state_changed.emit(-1.0, False, "")
             return
         try:
-            st = _get_state(self._source)
+            st = _get_state(self._source, self._cache)
         except Exception:
             st = None
         if st is None:
@@ -252,6 +320,8 @@ class VolumeController(QObject):
 
     def _run(self):
         _coinit()
+        self._cache = {}   # COM pointer cache, owned by this thread
+        last_set_ts = 0.0  # when the previous volume set executed (glide gate)
         try:
             self._emit()
             while not self._stop:
@@ -260,23 +330,36 @@ class VolumeController(QObject):
                 except queue.Empty:
                     self._emit()           # periodic refresh
                     continue
-                changed = False
-                while cmd != "__stop__":
+                # Coalesce the whole backlog: during a drag dozens of "set"s
+                # queue up, and only the LATEST value matters. Executing each
+                # one (a full session enumeration apiece before the cache) is
+                # what made the slider lag by seconds.
+                cmds = [cmd]
+                while True:
                     try:
-                        if cmd[0] == "set":
-                            _set_volume(self._source, cmd[1])
-                        elif cmd[0] == "mute":
-                            _set_mute(self._source, cmd[1])
-                        changed = True
-                    except Exception:
-                        pass
-                    try:
-                        cmd = self._q.get_nowait()
+                        cmds.append(self._q.get_nowait())
                     except queue.Empty:
                         break
-                if self._stop:
+                if "__stop__" in cmds or self._stop:
                     break
-                if changed:
-                    self._emit()
+                # Glide only for an ISOLATED click/slam. Queue emptiness alone
+                # cannot tell: the UI throttle paces a drag to one send per
+                # 40ms, so the queue looks empty mid-drag too. A real drag has
+                # a recent previous set; a click stands alone in time.
+                gentle = (self._q.empty()
+                          and time.monotonic() - last_set_ts > 0.3)
+                for kind, val in _coalesce(cmds):
+                    if kind == "set":
+                        try:
+                            _set_volume(self._source, val, self._cache, gentle)
+                        except Exception:
+                            pass
+                        last_set_ts = time.monotonic()
+                    else:
+                        try:
+                            _set_mute(self._source, val, self._cache)
+                        except Exception:
+                            pass   # a failed set must never eat a mute click
+                self._emit()
         finally:
             _couninit()

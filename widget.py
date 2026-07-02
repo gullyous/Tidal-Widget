@@ -42,7 +42,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QFrame, QStackedWidget, QSizePolicy, QSlider,
     QHBoxLayout, QVBoxLayout, QMenu, QSystemTrayIcon, QGraphicsDropShadowEffect,
-    QFileDialog,
+    QFileDialog, QProxyStyle, QStyle,
 )
 
 import config
@@ -110,6 +110,17 @@ def _dim_pixmap(pm: QPixmap) -> QPixmap:
     p.fillRect(out.rect(), QColor(0, 0, 0, 120))
     p.end()
     return out
+
+
+class _ClickToSetStyle(QProxyStyle):
+    """Slider style tweak: clicking the groove moves the handle straight to the
+    clicked position (and starts a drag from there) instead of paging toward
+    the mouse in coarse jumps, which read as the volume 'skipping'."""
+
+    def styleHint(self, hint, option=None, widget=None, return_data=None):
+        if hint == QStyle.SH_Slider_AbsoluteSetButtons:
+            return int(Qt.MouseButton.LeftButton.value)
+        return super().styleHint(hint, option, widget, return_data)
 
 
 class ElidedLabel(QLabel):
@@ -635,6 +646,9 @@ class NowPlayingWidget(QWidget):
         self._logged_in = False   # signed in to TIDAL (for likes/quality)
         self._muted = False         # current app/system mute (from volume backend)
         self._vol_updating = False  # guard: ignore slider signals during programmatic set
+        self._slider_style = _ClickToSetStyle()   # keep a reference (Qt doesn't own it)
+        self._vol_pending = None    # latest slider value awaiting send (throttle)
+        self._vol_sent = None
         self._accent_dyn = None     # accent tinted from album art (auto-accent)
         self._accent2_dyn = None    # second sampled color (duotone gradient)
         self._auto_hidden = False   # hidden by game mode, not by the user
@@ -663,6 +677,13 @@ class NowPlayingWidget(QWidget):
         self._timer.setInterval(200)
         self._timer.timeout.connect(self._tick_progress)
         # started on demand by _update_timer() (only while playing + expanded + visible)
+
+        # Throttle volume sends: a drag fires valueChanged per pixel; forward
+        # the first value instantly, then at most one every 40ms (trailing).
+        self._vol_send = QTimer(self)
+        self._vol_send.setSingleShot(True)
+        self._vol_send.setInterval(40)
+        self._vol_send.timeout.connect(self._vol_send_tick)
 
         # Debounce disk writes while the user scrolls the lyrics sync nudge.
         # (_pending_offset is set for real in _on_lyrics_offset before each save.)
@@ -744,6 +765,7 @@ class NowPlayingWidget(QWidget):
         self.c_vol.setRange(0, 100)
         self.c_vol.setFixedHeight(14)
         self.c_vol.setCursor(Qt.PointingHandCursor)
+        self.c_vol.setStyle(self._slider_style)   # groove click = go there
         self.c_vol.valueChanged.connect(self._on_vol_changed)
         self.c_vol.hide()   # shown only when a controllable session is found
 
@@ -841,6 +863,7 @@ class NowPlayingWidget(QWidget):
         self.e_vol.setRange(0, 100)
         self.e_vol.setFixedHeight(18)
         self.e_vol.setCursor(Qt.PointingHandCursor)
+        self.e_vol.setStyle(self._slider_style)   # groove click = go there
         self.e_vol.valueChanged.connect(self._on_vol_changed)
         self.e_vol_box = QWidget()
         vol_row = QHBoxLayout(self.e_vol_box)
@@ -900,7 +923,17 @@ class NowPlayingWidget(QWidget):
     def _on_vol_changed(self, value):
         if self._vol_updating:
             return
-        self.volume_changed.emit(value / 100.0)
+        self._vol_pending = value / 100.0
+        if not self._vol_send.isActive():
+            self.volume_changed.emit(self._vol_pending)   # leading edge: instant
+            self._vol_sent = self._vol_pending
+            self._vol_send.start()
+
+    def _vol_send_tick(self):
+        if self._vol_pending is not None and self._vol_pending != self._vol_sent:
+            self.volume_changed.emit(self._vol_pending)   # trailing edge
+            self._vol_sent = self._vol_pending
+            self._vol_send.start()   # keep pacing until the value settles
 
     def _on_mute(self):
         self.mute_toggled.emit(not self._muted)

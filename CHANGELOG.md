@@ -5,6 +5,19 @@ to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-07-02
+
+### Fixed
+- **The volume slider follows your keyboard volume keys.** The slider showed
+  TIDAL's per-app session level, which does not move when the volume keys change
+  the system master. It now shows the effective (audible) level, the app session
+  scaled by the master, so keyboard and mixer changes are reflected within a
+  second. Dragging the slider still adjusts TIDAL's own session, with the master
+  as the ceiling (same semantics as the Windows mixer), and unmuting in the
+  widget also lifts a system mute.
+- The system-volume fallback (used when no app audio session is found) had
+  silently stopped working with current pycaw versions; repaired.
+
 ## [1.4.1] - 2026-07-02
 
 ### Fixed

@@ -8,6 +8,7 @@ Entry point. Creates the Qt app, the SMTC worker, and the widget, then wires
 them together. Run via run.bat (or `python main.py`).
 """
 
+import re
 import sys
 import time
 
@@ -45,6 +46,21 @@ def _cli_verb(argv):
         return ""
     v = argv[i + 1].strip().lower()
     return v if v in CMD_VERBS else ""
+
+
+def _plain_notes(md):
+    """Release-body markdown -> plain text for the update dialog (QMessageBox
+    renders it literally, so **bold**, headings, and dividers read as noise)."""
+    out = []
+    for line in (md or "").splitlines():
+        s = line.rstrip()
+        if s.strip() == "---":
+            continue
+        s = re.sub(r"^#{1,6}\s*", "", s)
+        s = s.replace("**", "").replace("`", "")
+        if s or (out and out[-1]):   # collapse runs of blank lines
+            out.append(s)
+    return "\n".join(out).strip()
 
 
 def _forward_cmd(verb):
@@ -184,7 +200,7 @@ def main():
     def _on_update_available(rel):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QMessageBox, QProgressDialog
-        notes = (rel.get("body") or "").strip()
+        notes = _plain_notes(rel.get("body") or "")
         if len(notes) > 1200:
             notes = notes[:1200] + "..."
         box = QMessageBox(widget)
